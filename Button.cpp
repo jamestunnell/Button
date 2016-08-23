@@ -1,7 +1,7 @@
 /* $Id$
 ||
 || @file 		       Button.cpp
-|| @author 		     Alexander Brevig              <alexanderbrevig@gmail.com>        
+|| @author 		     Alexander Brevig              <alexanderbrevig@gmail.com>
 || @url            http://alexanderbrevig.com
 ||
 || @description
@@ -25,14 +25,14 @@
 || @constructor
 || | Set the initial state of this button
 || #
-|| 
+||
 || @parameter buttonPin  sets the pin that this switch is connected to
 || @parameter buttonMode indicates BUTTON_PULLUP or BUTTON_PULLDOWN resistor
 */
 Button::Button(uint8_t buttonPin, uint8_t buttonMode, bool _debounceMode, int _debounceDuration){
 	pin=buttonPin;
   pinMode(pin,INPUT);
-  
+
   debounceMode = _debounceMode;
   debounceDuration = _debounceDuration;
   debounceStartTime = millis();
@@ -40,14 +40,17 @@ Button::Button(uint8_t buttonPin, uint8_t buttonMode, bool _debounceMode, int _d
 	buttonMode==BUTTON_PULLDOWN ? pulldown() : pullup(buttonMode);
   state = 0;
   bitWrite(state,CURRENT,!mode);
-  
+
   cb_onPress = 0;
   cb_onRelease = 0;
   cb_onClick = 0;
   cb_onHold = 0;
-  
+
+  holdTriggeredTime = pressedStartTime = -1;
+
   numberOfPresses = 0;
-  triggeredHoldEvent = true;
+  holdTriggers = 0;
+  holdRetriggering = false;
 }
 
 /*
@@ -59,7 +62,7 @@ Button::Button(uint8_t buttonPin, uint8_t buttonMode, bool _debounceMode, int _d
 void Button::pullup(uint8_t buttonMode)
 {
 	mode=BUTTON_PULLUP;
-  if (buttonMode == BUTTON_PULLUP_INTERNAL) 
+  if (buttonMode == BUTTON_PULLUP_INTERNAL)
   {
 	  digitalWrite(pin,HIGH);
   }
@@ -79,26 +82,26 @@ void Button::pulldown(void)
 || @description
 || | Read and write states; issue callbacks
 || #
-|| 
+||
 || @return true if button is pressed
 */
 void Button::process(void)
 {
   //save the previous value
   bitWrite(state,PREVIOUS,bitRead(state,CURRENT));
-  
+
   //get the current status of the pin
   if (digitalRead(pin) == mode)
   {
     //currently the button is not pressed
     bitWrite(state,CURRENT,false);
-  } 
-  else 
+  }
+  else
   {
     //currently the button is pressed
     bitWrite(state,CURRENT,true);
   }
-  
+
   //handle state changes
   if (bitRead(state,CURRENT) != bitRead(state,PREVIOUS))
   {
@@ -117,19 +120,18 @@ void Button::process(void)
     // Serial.println("state changed");
     debounceStartTime = millis();
     //the state changed to PRESSED
-    if (bitRead(state,CURRENT) == true) 
+    if (bitRead(state,CURRENT) == true)
     {
       numberOfPresses++;
       if (cb_onPress) { cb_onPress(*this); }   //fire the onPress event
-      pressedStartTime = millis();             //start timing
-      triggeredHoldEvent = false;
-    } 
+      holdTriggeredTime = pressedStartTime = millis();             //start timing
+    }
     else //the state changed to RELEASED
     {
       if (cb_onRelease) { cb_onRelease(*this); } //fire the onRelease event
       if (cb_onClick) { cb_onClick(*this); }   //fire the onClick event AFTER the onRelease
       //reset states (for timing and for event triggering)
-      pressedStartTime = -1;
+      holdTriggeredTime = pressedStartTime = -1;
     }
     //note that the state changed
     bitWrite(state,CHANGED,true);
@@ -139,14 +141,15 @@ void Button::process(void)
     //note that the state did not change
     bitWrite(state,CHANGED,false);
     //should we trigger an onHold event?
-    if (pressedStartTime!=-1 && !triggeredHoldEvent) 
+    if (holdTriggeredTime != -1 && (holdTriggers == 0 || holdRetriggering))
     {
-      if (millis()-pressedStartTime > holdEventThreshold) 
-      { 
-        if (cb_onHold) 
-        { 
-          cb_onHold(*this); 
-          triggeredHoldEvent = true;
+      if ((millis() - holdTriggeredTime) > holdEventThreshold)
+      {
+        if (cb_onHold)
+        {
+          cb_onHold(*this);
+          holdTriggers++;
+          holdTriggeredTime = millis();
         }
       }
     }
@@ -157,7 +160,7 @@ void Button::process(void)
 || @description
 || | Return the bitRead(state,CURRENT) of the switch
 || #
-|| 
+||
 || @return true if button is pressed
 */
 bool Button::isPressed(bool proc)
@@ -206,16 +209,17 @@ bool Button::uniquePress()
 || | This will clear the counter for next iteration and thus return true once
 || #
 */
-bool Button::held(unsigned int time /*=0*/) 
+bool Button::held(unsigned int time /*=0*/)
 {
   process();
   unsigned int threshold = time ? time : holdEventThreshold; //use holdEventThreshold if time == 0
 	//should we trigger a onHold event?
-  if (pressedStartTime!=-1 && !triggeredHoldEvent) 
+  if (holdTriggeredTime != -1 && (holdTriggers == 0 || holdRetriggering))
   {
-    if (millis()-pressedStartTime > threshold) 
-    { 
-      triggeredHoldEvent = true;
+    if ((millis() - holdTriggeredTime) > holdEventThreshold)
+    {
+      holdTriggers++;
+      holdTriggeredTime = millis();
       return true;
     }
   }
@@ -228,9 +232,9 @@ bool Button::held(unsigned int time /*=0*/)
 || | Check to see if the button has been pressed for time ms
 || #
 */
-bool Button::heldFor(unsigned int time) 
+bool Button::heldFor(unsigned int time)
 {
-	if (isPressed()) 
+	if (isPressed())
   {
 		if (millis()-pressedStartTime > time) { return true; }
 	}
@@ -241,10 +245,24 @@ bool Button::heldFor(unsigned int time)
 || @description
 || | Set the hold event time threshold
 || #
+||
+|| @parameter holdTime Time to wait (ms) until hold is triggered
 */
-void Button::setHoldThreshold(unsigned int holdTime) 
-{ 
-  holdEventThreshold = holdTime; 
+void Button::setHoldThreshold(unsigned int holdTime)
+{
+  holdEventThreshold = holdTime;
+}
+
+/*
+|| @description
+|| | Enable/disable button hold retriggering
+|| #
+||
+|| @parameter enableRetriggering Sets flag to enable/disable hold retriggering
+*/
+void Button::setHoldRetriggering(bool enableRetriggering)
+{
+  holdRetriggering = enableRetriggering;
 }
 
 /*
@@ -289,10 +307,13 @@ void Button::clickHandler(buttonEventHandler handler)
 || #
 ||
 || @parameter handler The function to call when this button is held
+|| @parameter holdTime Time to wait (ms) until hold is triggered
+|| @parameter enableRetriggering Sets flag to enable/disable hold retriggering
 */
-void Button::holdHandler(buttonEventHandler handler, unsigned int holdTime /*=0*/)
+void Button::holdHandler(buttonEventHandler handler, unsigned int holdTime /*=0*/, bool enableRetriggering /*=false*/)
 {
   if (holdTime>0) { setHoldThreshold(holdTime); }
+  setHoldRetriggering(enableRetriggering);
   cb_onHold = handler;
 }
 
@@ -309,12 +330,12 @@ unsigned int Button::holdTime() const { if (pressedStartTime!=-1) { return milli
 || @description
 || | Compare a button object against this
 || #
-|| 
+||
 || @parameter  rhs the Button to compare against this Button
-|| 
+||
 || @return true if they are the same
 */
-bool Button::operator==(Button &rhs) 
+bool Button::operator==(Button &rhs)
 {
   return (this==&rhs);
 }

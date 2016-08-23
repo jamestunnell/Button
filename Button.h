@@ -1,7 +1,7 @@
 /* $Id$
 ||
 || @file 		       Button.cpp
-|| @author 		     Alexander Brevig              <alexanderbrevig@gmail.com>        
+|| @author 		     Alexander Brevig              <alexanderbrevig@gmail.com>
 || @url            http://alexanderbrevig.com
 ||
 || @description
@@ -27,9 +27,9 @@ typedef void (*buttonEventHandler)(Button&);
 
 class Button {
   public:
-  
+
     Button(uint8_t buttonPin, uint8_t buttonMode=BUTTON_PULLUP_INTERNAL, bool _debounceMode=true, int _debounceDuration=20);
-    
+
     uint8_t             pin;
     void pullup(uint8_t buttonMode);
     void pulldown();
@@ -39,26 +39,28 @@ class Button {
     bool wasPressed(bool proc=true);
     bool stateChanged(bool proc=true);
     bool uniquePress();
-    
+
     void setHoldThreshold(unsigned int holdTime);
+    void setHoldRetriggering(bool enableRetriggering);
     bool held(unsigned int time=0);
     bool heldFor(unsigned int time);
-    
+
     void pressHandler(buttonEventHandler handler);
     void releaseHandler(buttonEventHandler handler);
     void clickHandler(buttonEventHandler handler);
-    void holdHandler(buttonEventHandler handler, unsigned int holdTime=0);
-  
+    void holdHandler(buttonEventHandler handler, unsigned int holdTime=0, bool enableRetriggering = false);
+
     unsigned int holdTime() const;
     inline unsigned int presses() const { return numberOfPresses; }
-    
+
     bool operator==(Button &rhs);
-    
-  private: 
+
+  private:
     uint8_t             mode;
     uint8_t             state;
     bool                debounceMode;
     unsigned long       pressedStartTime;
+    unsigned long       holdTriggeredTime;
     unsigned int        holdEventThreshold;
     unsigned long       debounceStartTime;
     int                 debounceDuration;
@@ -67,7 +69,8 @@ class Button {
     buttonEventHandler  cb_onClick;
     buttonEventHandler  cb_onHold;
     unsigned int        numberOfPresses;
-    bool                triggeredHoldEvent;
+    unsigned int        holdTriggers;
+    bool                holdRetriggering;
 };
 
 #endif
